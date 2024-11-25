@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>WebRTC Stream</title>
+  </head>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <body>
+    <div
+      class="flex items-center justify-center h-screen text-slate-900 bg-slate-100"
+    >
+      <div class="p-10 rounded-lg bg-white">
+        <div class="flex items-center gap-4 mb-4">
+          <h1 class="text-2xl font-bold">WebRTC Client</h1>
+          <div class="flex items-center gap-2">
+            <div
+              id="streamStatus"
+              class="w-3 h-3 rounded-full bg-red-500"
+            ></div>
+            <span id="streamStatusText" class="text-sm text-gray-600"
+              >Stream Offline</span
+            >
+          </div>
+        </div>
+        <video
+          id="video"
+          width="640"
+          height="480"
+          playsinline
+          controls
+          autoplay
+          class="rounded-md"
+        ></video>
+        <div class="mt-4 text-center hidden">
+          <div id="status"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const video = document.getElementById("video");
+      const status = document.getElementById("status");
+      const streamStatus = document.getElementById("streamStatus");
+      const streamStatusText = document.getElementById("streamStatusText");
+      let pc;
+      let ws;
+      let lastPacketTime = 0;
+      let streamCheckInterval;
+
+      function updateStatus(message) {
+        status.textContent = message;
+        console.log(message);
+      }
+
+      function updateStreamStatus(isActive) {
+        if (isActive) {
+          streamStatus.classList.remove("bg-red-500");
+          streamStatus.classList.add("bg-green-500");
+          streamStatusText.textContent = "Stream Online";
+        } else {
+          streamStatus.classList.remove("bg-green-500");
+          streamStatus.classList.add("bg-red-500");
+          streamStatusText.textContent = "Stream Offline";
+        }
+      }
+
+      function connect() {
+        // Add connection state tracking
+        if (ws && ws.readyState === WebSocket.CONNECTING) {
+          updateStatus("WebSocket connection already in progress");
+          return;
+        }
+
+        if (pc) {
+          pc.close();
+          pc = null;
+        }
+
+        // ws = new WebSocket("ws://localhost:8080/ws");
+        // ws = new WebSocket("ws://3.88.178.154:8080/ws");
+        ws = new WebSocket("ws://3.88.178.154:8080/ws");
+        pc = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        });
+
+        // Add transceivers
+        pc.addTransceiver("video", { direction: "recvonly" });
+        pc.addTransceiver("audio", { direction: "recvonly" });
+
+        pc.ontrack = function (event) {
+          updateStatus("Received track: " + event.track.kind);
+          if (event.track.kind === "video") {
+            video.srcObject = event.streams[0];
+          }
+        };
+
+        pc.onicecandidate = function (event) {
+          if (!ws) return;
+          if (event.candidate) {
+            ws.send(
+              JSON.stringify({
+                type: "ice",
+                ice: event.candidate.toJSON(),
+              })
+            );
+          }
+        };
+
+        pc.oniceconnectionstatechange = function () {
+          updateStatus("ICE Connection State: " + pc.iceConnectionState);
+        };
+
+        pc.onsignalingstatechange = function () {
+          updateStatus("Signaling State: " + pc.signalingState);
+        };
+
+        ws.onopen = async function () {
+          updateStatus("WebSocket connected - creating offer");
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            ws.send(
+              JSON.stringify({
+                type: "offer",
+                sdp: pc.localDescription,
+              })
+            );
+          } catch (e) {
+            updateStatus("Error creating offer: " + e);
+          }
+        };
+
+        ws.onmessage = async function (event) {
+          try {
+            const msg = JSON.parse(event.data);
+            updateStatus("Received message type: " + msg.type);
+
+            if (msg.type === "answer") {
+              await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            } else if (msg.type === "ice" && msg.ice) {
+              try {
+                await pc.addIceCandidate(msg.ice);
+              } catch (e) {
+                updateStatus("Error adding ICE candidate: " + e);
+              }
+            } else if (msg.type === "stream_status") {
+              updateStreamStatus(msg.error === "true");
+            }
+          } catch (e) {
+            updateStatus("Error handling message: " + e);
+          }
+        };
+
+        ws.onerror = function (error) {
+          updateStatus("WebSocket Error: " + error);
+        };
+
+        ws.onclose = function () {
+          updateStatus(
+            "WebSocket Closed - attempting to reconnect in 5 seconds"
+          );
+          // Cleanup
+          if (pc) {
+            pc.close();
+            pc = null;
+          }
+          ws = null;
+          // Attempt to reconnect after a delay, but only if we're not already connecting
+          setTimeout(connect, 5000);
+        };
+      }
+
+      // Add connection error handling
+      window.addEventListener("unload", () => {
+        if (streamCheckInterval) {
+          clearInterval(streamCheckInterval);
+        }
+        if (ws) ws.close();
+        if (pc) pc.close();
+      });
+
+      // Start the connection
+      connect();
+    </script>
+  </body>
+</html>
