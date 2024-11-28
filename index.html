@@ -76,10 +76,19 @@
         }
 
         // ws = new WebSocket("ws://localhost:8080/ws");
-        // ws = new WebSocket("ws://3.88.178.154:8080/ws");
         ws = new WebSocket("wss://107.22.19.185/ws");
+
         pc = new RTCPeerConnection({
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+          iceServers: [
+            // {
+            //   urls: "stun:stun.l.google.com:19302", // STUN server URL
+            // },
+            {
+              urls: "turn:107.22.19.185:3478", // TURN server URL
+              username: "username", // Username for TURN server
+              credential: "password", // Password for TURN server
+            },
+          ],
         });
 
         // Add transceivers
